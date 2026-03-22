@@ -1,0 +1,150 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /agents/{agentId}
+    // Fields:
+    //   - name: string (required)
+    //   - email: string (required)
+    //   - role: string (required, enum: ['agent', 'admin'])
+    //   - active: bool (optional)
+    //
+    // Collection: /vehicles/{plate}
+    // Fields:
+    //   - plate: string (required)
+    //   - type: string (required, enum: ['moto', 'car', 'bus', 'truck'])
+    //   - ownerId: string (optional)
+    //   - lastPassage: timestamp (optional)
+    //
+    // Collection: /transactions/{transactionId}
+    // Fields:
+    //   - vehiclePlate: string (required)
+    //   - vehicleType: string (required)
+    //   - amount: number (required)
+    //   - currency: string (required, enum: ['USD', 'CDF'])
+    //   - paymentMethod: string (required, enum: ['cash', 'mobile_money', 'card', 'subscription', 'bank_transfer'])
+    //   - agentId: string (required)
+    //   - postId: string (required)
+    //   - timestamp: timestamp (required)
+    //   - status: string (required, enum: ['completed', 'pending', 'failed', 'cancelled', 'awaiting_bank_proof'])
+    //   - cancelReason: string (optional)
+    //   - originalOfflineId: string (optional)
+    //   - syncedAt: timestamp (optional)
+    //
+    // Collection: /tollPosts/{postId}
+    // Fields:
+    //   - name: string (required)
+    //   - location: string (optional)
+    //
+    // Collection: /subscriptions/{userId}
+    // Fields:
+    //   - userId: string (required)
+    //   - balance: number (required)
+    //   - planType: string (required, enum: ['basic', 'premium', 'corporate'])
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role == 'admin') ||
+         (request.auth.token.email == "kassheritier@telgroups.org" && request.auth.token.email_verified == true));
+    }
+
+    function isAgent() {
+      return isAuthenticated() &&
+        (isAdmin() || (exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role in ['agent', 'admin']));
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Domain Validators
+    function isValidAgent(data) {
+      return hasRequiredFields(['name', 'email', 'role']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.role in ['agent', 'admin'];
+    }
+
+    function isValidVehicle(data) {
+      return hasRequiredFields(['plate', 'type']) &&
+             data.plate is string && data.plate.size() > 0 && data.plate.size() < 20 &&
+             data.type in ['moto', 'car', 'bus', 'truck'];
+    }
+
+    function isValidTransaction(data) {
+      return hasRequiredFields(['vehiclePlate', 'vehicleType', 'amount', 'currency', 'paymentMethod', 'agentId', 'postId', 'timestamp', 'status']) &&
+             data.vehiclePlate is string && data.vehiclePlate.size() > 0 &&
+             data.amount is number && data.amount >= 0 &&
+             data.currency in ['USD', 'CDF'] &&
+             data.paymentMethod in ['cash', 'mobile_money', 'card', 'subscription', 'bank_transfer'] &&
+             data.status in ['completed', 'pending', 'failed', 'cancelled', 'awaiting_bank_proof'] &&
+             data.postId is string &&
+             (!('originalOfflineId' in data) || data.originalOfflineId is string) &&
+             (!('syncedAt' in data) || data.syncedAt is timestamp);
+    }
+
+    function isValidSubscription(data) {
+      return hasRequiredFields(['userId', 'balance', 'planType']) &&
+             data.userId is string &&
+             data.balance is number &&
+             data.planType in ['basic', 'premium', 'corporate'];
+    }
+
+    // Rules
+    match /tollPosts/{postId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /agents/{agentId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidAgent(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /vehicles/{plate} {
+      allow read: if isAgent() || (isAuthenticated() && request.auth.uid == resource.data.ownerId);
+      allow create, update: if isAgent() && isValidVehicle(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAgent() && isValidTransaction(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /subscriptions/{userId} {
+      allow read: if isOwner(userId) || isAgent();
+      allow create, update: if isAdmin() || (isAgent() && request.resource.data.userId == userId);
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

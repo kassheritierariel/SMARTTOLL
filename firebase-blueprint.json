@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Represents a vehicle in the system",
+      "type": "object",
+      "properties": {
+        "plate": { "type": "string", "description": "License plate number" },
+        "type": { "type": "string", "enum": ["moto", "car", "bus", "truck"], "description": "Type of vehicle" },
+        "ownerId": { "type": "string", "description": "UID of the owner (if registered)" },
+        "lastPassage": { "type": "string", "format": "date-time", "description": "Timestamp of the last recorded passage" }
+      },
+      "required": ["plate", "type"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Represents a toll payment transaction",
+      "type": "object",
+      "properties": {
+        "vehiclePlate": { "type": "string", "description": "Plate of the vehicle" },
+        "vehicleType": { "type": "string", "description": "Type of vehicle at time of transaction" },
+        "amount": { "type": "number", "description": "Amount paid" },
+        "currency": { "type": "string", "enum": ["USD", "CDF"] },
+        "paymentMethod": { "type": "string", "enum": ["cash", "mobile_money", "card", "subscription"], "description": "Method of payment" },
+        "agentId": { "type": "string", "description": "UID of the agent who processed the transaction" },
+        "postId": { "type": "string", "description": "ID of the toll post" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Time of transaction" },
+        "syncedAt": { "type": "string", "format": "date-time", "description": "Time of synchronization" },
+        "originalOfflineId": { "type": "string", "description": "Temporary ID assigned when offline" },
+        "status": { "type": "string", "enum": ["completed", "pending", "failed", "cancelled", "awaiting_bank_proof"], "description": "Status of the transaction" },
+        "cancelReason": { "type": "string" }
+      },
+      "required": ["vehiclePlate", "amount", "currency", "paymentMethod", "timestamp", "status", "postId"]
+    },
+    "TollPost": {
+      "title": "TollPost",
+      "description": "Represents a physical toll booth location",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "location": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Agent": {
+      "title": "Agent",
+      "description": "Represents a toll booth agent or admin",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the agent" },
+        "email": { "type": "string", "description": "Email address" },
+        "role": { "type": "string", "enum": ["agent", "admin"], "description": "Role in the system" },
+        "active": { "type": "boolean", "description": "Whether the agent is currently active" }
+      },
+      "required": ["name", "email", "role"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "Represents a user's prepaid toll subscription",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user" },
+        "balance": { "type": "number", "description": "Current prepaid balance" },
+        "planType": { "type": "string", "enum": ["basic", "premium", "corporate"], "description": "Type of subscription plan" }
+      },
+      "required": ["userId", "balance", "planType"]
+    }
+  },
+  "firestore": {
+    "/vehicles/{plate}": {
+      "schema": "Vehicle",
+      "description": "Collection of vehicles indexed by plate"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Collection of all toll transactions"
+    },
+    "/agents/{agentId}": {
+      "schema": "Agent",
+      "description": "Collection of agents and admins"
+    },
+    "/subscriptions/{userId}": {
+      "schema": "Subscription",
+      "description": "Collection of user subscriptions"
+    }
+  }
+}

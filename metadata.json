@@ -1,0 +1,5 @@
+{
+  "name": "SmartToll RDC",
+  "description": "Système intelligent de gestion des péages en République Démocratique du Congo avec reconnaissance par IA et mode hors ligne.",
+  "requestFramePermissions": ["camera", "bluetooth", "geolocation"]
+}

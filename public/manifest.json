@@ -1,0 +1,21 @@
+{
+  "name": "SmartToll DRC",
+  "short_name": "SmartToll",
+  "description": "Système de péage intelligent pour la République Démocratique du Congo",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#007FFF",
+  "theme_color": "#007FFF",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/toll/192/192",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://picsum.photos/seed/toll/512/512",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

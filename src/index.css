@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-receipt, .print-receipt * {
+    visibility: visible;
+  }
+  .print-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+    border: none;
+    border-radius: 0;
+  }
+  /* Hide buttons in print */
+  .print-receipt button, .print-receipt .flex.gap-3 {
+    display: none !important;
+  }
+}
+
+@theme {
+  --animate-spin-slow: spin 3s linear infinite;
+  --color-drc-blue: #007FFF;
+  --color-drc-yellow: #F7D618;
+  --color-drc-red: #CE1021;
+}
+
+@utility custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(0, 127, 255, 0.1);
+    border-radius: 10px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 127, 255, 0.2);
+  }
+}
+
