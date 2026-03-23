@@ -28,7 +28,15 @@
         "syncedAt": { "type": "string", "format": "date-time", "description": "Time of synchronization" },
         "originalOfflineId": { "type": "string", "description": "Temporary ID assigned when offline" },
         "status": { "type": "string", "enum": ["completed", "pending", "failed", "cancelled", "awaiting_bank_proof"], "description": "Status of the transaction" },
-        "cancelReason": { "type": "string" }
+        "cancelReason": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "latitude": { "type": "number" },
+            "longitude": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        }
       },
       "required": ["vehiclePlate", "amount", "currency", "paymentMethod", "timestamp", "status", "postId"]
     },

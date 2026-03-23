@@ -47,6 +47,8 @@ export interface TollPost {
   id: string;
   name: string;
   location: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface Subscription {
@@ -54,6 +56,7 @@ export interface Subscription {
   balance: number;
   currency: Currency;
   planType: 'basic' | 'premium' | 'corporate';
+  expiryDate?: any; // Firestore Timestamp
 }
 
 export const TOLL_RATES: Record<VehicleType, Record<Currency, number>> = {

@@ -84,69 +84,30 @@ export const AgentDashboard: React.FC = () => {
   const [transactionToCancel, setTransactionToCancel] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
-  const [generationStatus, setGenerationStatus] = useState<string>('');
+  const [videoUrl, setVideoUrl] = useState<string | null>("https://storage.googleapis.com/firebasestorage.googleapis.com/v0/b/ais-dev-f7xikqtli4ljuu7zt75t5c.appspot.com/o/user_uploads%2Fvideo_1.mp4?alt=media"); // Tutorial video URL
+  const [hasApiKey, setHasApiKey] = useState(false);
 
-  const generateTutorialVideo = async () => {
-    try {
-      // @ts-ignore
-      const hasKey = await window.aistudio.hasSelectedApiKey();
-      if (!hasKey) {
-        // @ts-ignore
-        await window.aistudio.openSelectKey();
-        // After opening, we assume success as per instructions
+  useEffect(() => {
+    const checkApiKey = async () => {
+      const aiWindow = window as any;
+      if (aiWindow.aistudio && typeof aiWindow.aistudio.hasSelectedApiKey === 'function') {
+        const selected = await aiWindow.aistudio.hasSelectedApiKey();
+        setHasApiKey(selected);
       }
+    };
+    checkApiKey();
+  }, []);
 
-      setIsGeneratingVideo(true);
-      setGenerationStatus('Initialisation de la génération...');
-
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
-      let operation = await ai.models.generateVideos({
-        model: 'veo-3.1-fast-generate-preview',
-        prompt: 'A professional tutorial video for SmartToll RDC agents, specifically demonstrating the Offline Mode and AI Data Synchronization. The scene shows an agent in a remote DRC location with no internet (indicated by a "No Signal" icon). The agent successfully scans a vehicle plate and records a transaction, with the app showing "Saved Offline". Then, the agent moves to an area with signal, and the app automatically starts a "Syncing with AI" process with a modern progress bar. The video ends with a "Sync Complete" confirmation and a data dashboard updating. High quality, 1080p, clear UI overlays, educational and reassuring tone.',
-        config: {
-          numberOfVideos: 1,
-          resolution: '1080p',
-          aspectRatio: '16:9'
-        }
-      });
-
-      setGenerationStatus('Génération de la vidéo en cours (cela peut prendre quelques minutes)...');
-
-      // Poll for completion
-      while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        // @ts-ignore
-        operation = await ai.operations.getVideosOperation({ operation: operation });
-      }
-
-      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-      if (downloadLink) {
-        setGenerationStatus('Téléchargement de la vidéo...');
-        const response = await fetch(downloadLink, {
-          method: 'GET',
-          headers: {
-            'x-goog-api-key': process.env.API_KEY || '',
-          },
-        });
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        setVideoUrl(url);
-      }
-    } catch (err: any) {
-      console.error('Video generation failed:', err);
-      const errorMessage = err.message || JSON.stringify(err);
-      if (errorMessage.includes('Requested entity was not found') || errorMessage.includes('PERMISSION_DENIED')) {
-        // @ts-ignore
-        await window.aistudio.openSelectKey();
-      }
-      setError("Échec de la génération de la vidéo. Veuillez vérifier que votre clé API provient d'un projet Google Cloud avec facturation activée et que l'API Veo est activée.");
-    } finally {
-      setIsGeneratingVideo(false);
-      setGenerationStatus('');
+  const handleSelectApiKey = async () => {
+    const aiWindow = window as any;
+    if (aiWindow.aistudio && typeof aiWindow.aistudio.openSelectKey === 'function') {
+      await aiWindow.aistudio.openSelectKey();
+      setHasApiKey(true);
     }
+  };
+
+  const openTutorialVideo = () => {
+    setShowVideoModal(true);
   };
 
   const [tariffs, setTariffs] = useState<Record<VehicleType, Record<Currency, number>>>(TOLL_RATES);
@@ -158,6 +119,7 @@ export const AgentDashboard: React.FC = () => {
   const [filterPlate, setFilterPlate] = useState('');
   const [filterVehicleType, setFilterVehicleType] = useState<VehicleType | 'all'>('all');
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number; address?: string } | null>(null);
+  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
 
   const getCurrentLocation = (): Promise<{ latitude: number; longitude: number } | null> => {
     return new Promise((resolve) => {
@@ -180,6 +142,24 @@ export const AgentDashboard: React.FC = () => {
       );
     });
   };
+
+  const fetchLocationAndAddress = async () => {
+    setIsCapturingLocation(true);
+    try {
+      const coords = await getCurrentLocation();
+      if (coords) {
+        const address = await geminiService.getAddressFromLocation(coords.latitude, coords.longitude);
+        const locationData = { ...coords, address };
+        setCurrentLocation(locationData);
+        return locationData;
+      }
+    } catch (error) {
+      console.error("Error fetching location/address:", error);
+    } finally {
+      setIsCapturingLocation(false);
+    }
+    return null;
+  };
   const [filterStatus, setFilterStatus] = useState<TransactionStatus | 'all'>('all');
   const [filterPayment, setFilterPayment] = useState<PaymentMethod | 'all'>('all');
   const [filterStartDate, setFilterStartDate] = useState<string>('');
@@ -196,6 +176,59 @@ export const AgentDashboard: React.FC = () => {
   const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [notifiedSubscriptions, setNotifiedSubscriptions] = useState<Set<string>>(new Set());
+
+  const checkSubscriptionBalances = async () => {
+    try {
+      const allSubs = await tollService.getAllSubscriptions();
+      const now = new Date();
+      const threeDaysFromNow = new Date();
+      threeDaysFromNow.setDate(now.getDate() + 3);
+
+      let newNotificationsCount = 0;
+
+      allSubs.forEach(sub => {
+        if (notifiedSubscriptions.has(sub.userId)) return;
+
+        let isLow = false;
+        let isExpiring = false;
+        let reason = '';
+
+        if (sub.currency === 'CDF' && sub.balance < 5000) {
+          isLow = true;
+          reason = `Solde bas (${sub.balance} CDF)`;
+        } else if (sub.currency === 'USD' && sub.balance < 2) {
+          isLow = true;
+          reason = `Solde bas (${sub.balance} USD)`;
+        }
+
+        if (sub.expiryDate) {
+          const expiry = sub.expiryDate.toDate ? sub.expiryDate.toDate() : new Date(sub.expiryDate);
+          if (expiry < threeDaysFromNow) {
+            isExpiring = true;
+            reason = isLow ? `${reason} et expiration proche` : `Expiration proche (${format(expiry, 'dd/MM/yyyy')})`;
+          }
+        }
+
+        if (isLow || isExpiring) {
+          addNotification('low_balance', `Alerte Abonnement: L'utilisateur ${sub.userId} a un ${reason}.`);
+          setNotifiedSubscriptions(prev => {
+            const next = new Set(prev);
+            next.add(sub.userId);
+            return next;
+          });
+          newNotificationsCount++;
+        }
+      });
+      
+      if (newNotificationsCount === 0 && allSubs.length > 0) {
+        // If no real alerts, we can still show a generic one for demo if needed, 
+        // but the user asked for real checks.
+      }
+    } catch (err) {
+      console.error('Error checking subscriptions:', err);
+    }
+  };
 
   const addNotification = (type: AppNotification['type'], message: string) => {
     const newNotif: AppNotification = {
@@ -220,7 +253,7 @@ export const AgentDashboard: React.FC = () => {
     setNotifications([]);
   };
 
-  const handleQRScanned = (data: any) => {
+  const handleQRScanned = async (data: any) => {
     if (!data || Object.keys(data).length === 0) {
       setError("Le QR code est vide ou illisible.");
       return;
@@ -260,6 +293,9 @@ export const AgentDashboard: React.FC = () => {
       setError("Aucune information exploitable n'a été trouvée dans le QR code.");
     }
     
+    // Capture location after QR scan
+    await fetchLocationAndAddress();
+
     setTimeout(() => setSuccessMessage(null), 4000);
     setIsQRScanning(false);
   };
@@ -308,24 +344,27 @@ export const AgentDashboard: React.FC = () => {
     }
     updatePendingCount();
 
-    // Inactivity simulation for low balance notification
+    // Inactivity simulation for subscription check
     let inactivityTimer: NodeJS.Timeout;
-    let hasNotified = false;
 
     const resetInactivityTimer = () => {
-      if (hasNotified) return;
       clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
-        addNotification('low_balance', "Alerte Inactivité: L'abonnement du véhicule 1234AB01 est presque épuisé (Solde: 2.500 CDF).");
-        hasNotified = true;
-      }, 5000);
+        checkSubscriptionBalances();
+      }, 30000); // 30 seconds of inactivity triggers a check
     };
 
     const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
     activityEvents.forEach(event => window.addEventListener(event, resetInactivityTimer));
     
+    // Periodic check every 5 minutes
+    const periodicCheckInterval = setInterval(() => {
+      checkSubscriptionBalances();
+    }, 300000);
+
     // Initial start
     resetInactivityTimer();
+    checkSubscriptionBalances(); // Initial check on mount
 
     const unsubscribe = tollService.subscribeToTransactions((serverTxs) => {
       const offlineTxs = JSON.parse(localStorage.getItem('offline_transactions') || '[]');
@@ -352,6 +391,7 @@ export const AgentDashboard: React.FC = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       clearTimeout(inactivityTimer);
+      clearInterval(periodicCheckInterval);
       activityEvents.forEach(event => window.removeEventListener(event, resetInactivityTimer));
       unsubscribe();
     };
@@ -397,6 +437,7 @@ export const AgentDashboard: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
     setLastConfirmedTransaction(null);
+    setCurrentLocation(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -442,16 +483,11 @@ export const AgentDashboard: React.FC = () => {
       const amount = tariffs[vehicleType][currency];
       const upperPlate = plate.toUpperCase();
       
-      // Get current location
-      const locationCoords = await getCurrentLocation();
-      let locationData: any = null;
-      if (locationCoords) {
-        const address = await geminiService.getAddressFromLocation(locationCoords.latitude, locationCoords.longitude);
-        locationData = {
-          ...locationCoords,
-          address: address || undefined
-        };
-      }
+    // Capture location if not already captured
+    let locationData = currentLocation;
+    if (!locationData) {
+      locationData = await fetchLocationAndAddress();
+    }
 
       // Check if vehicle exists or register it
       let vehicle = await tollService.getVehicle(upperPlate);
@@ -647,8 +683,24 @@ export const AgentDashboard: React.FC = () => {
 
             {/* Logo */}
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-drc-blue rounded-xl flex items-center justify-center text-white shadow-md">
-                <LayoutDashboard className="w-5 h-5" />
+              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center overflow-hidden shadow-md border border-slate-700">
+                {/* Replace with actual logo path when available */}
+                <img 
+                  src="/logo.png" 
+                  alt="SmartToll Logo" 
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    // Fallback to icon if image fails to load
+                    (e.target as HTMLImageElement).style.display = 'none';
+                    const parent = (e.target as HTMLImageElement).parentElement;
+                    if (parent) {
+                      const icon = document.createElement('div');
+                      icon.className = "w-full h-full bg-drc-blue flex items-center justify-center text-white";
+                      icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-layout-dashboard"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>';
+                      parent.appendChild(icon);
+                    }
+                  }}
+                />
               </div>
               <h1 className="text-lg font-black text-white tracking-tighter hidden sm:block">
                 SmartToll <span className="text-drc-red">RDC</span>
@@ -657,18 +709,18 @@ export const AgentDashboard: React.FC = () => {
 
             {/* Status Indicators */}
             <div className="flex items-center gap-2 sm:gap-3">
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[11px] font-black uppercase tracking-widest transition-all shadow-sm ${
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl border text-[11px] font-black uppercase tracking-widest transition-all shadow-md ${
                 isOnline 
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                  : 'bg-red-600 text-white border-red-700 animate-pulse ring-4 ring-red-600/20'
+                  ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg shadow-emerald-500/20' 
+                  : 'bg-red-600 text-white border-red-500 animate-pulse ring-4 ring-red-600/30'
               }`}>
                 {isOnline ? (
-                  <Wifi className="w-3.5 h-3.5" />
+                  <Wifi className="w-4 h-4" />
                 ) : (
-                  <WifiOff className="w-3.5 h-3.5" />
+                  <WifiOff className="w-4 h-4" />
                 )}
-                <span className="hidden md:inline">{isOnline ? 'Système en Ligne' : 'MODE HORS LIGNE'}</span>
-                <span className="md:hidden">{isOnline ? 'Live' : 'OFFLINE'}</span>
+                <span className="hidden sm:inline">{isOnline ? 'En Ligne' : 'Hors Ligne'}</span>
+                <span className="sm:hidden">{isOnline ? 'ON' : 'OFF'}</span>
               </div>
 
               {pendingSyncCount > 0 && (
@@ -710,6 +762,15 @@ export const AgentDashboard: React.FC = () => {
               </button>
             )}
             
+            {/* Tutorial Button */}
+            <button 
+              onClick={openTutorialVideo}
+              className="p-2 text-slate-400 hover:bg-slate-800 hover:text-drc-blue rounded-xl transition-all active:scale-90"
+              title="Tutoriel Utilisation"
+            >
+              <Info className="w-6 h-6" />
+            </button>
+
             {/* Notifications Bell */}
             <div className="relative">
               <button 
@@ -745,8 +806,22 @@ export const AgentDashboard: React.FC = () => {
         `}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-drc-blue rounded-2xl flex items-center justify-center text-white shadow-xl">
-              <LayoutDashboard className="w-7 h-7" />
+            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center overflow-hidden shadow-xl border border-slate-700">
+              <img 
+                src="/logo.png" 
+                alt="SmartToll Logo" 
+                className="w-full h-full object-contain"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  const parent = (e.target as HTMLImageElement).parentElement;
+                  if (parent) {
+                    const icon = document.createElement('div');
+                    icon.className = "w-full h-full bg-drc-blue flex items-center justify-center text-white";
+                    icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-layout-dashboard"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>';
+                    parent.appendChild(icon);
+                  }
+                }}
+              />
             </div>
             <div className="flex flex-col">
               <h1 className="text-2xl font-black text-white tracking-tighter flex items-center gap-2">
@@ -764,7 +839,7 @@ export const AgentDashboard: React.FC = () => {
         </div>
 
         <button 
-          onClick={() => setShowVideoModal(true)}
+          onClick={openTutorialVideo}
           className="w-full flex items-center gap-3 px-4 py-3 bg-white/5 text-drc-blue rounded-2xl font-bold text-sm hover:bg-white/10 transition-all border border-white/10 shadow-sm group"
         >
           <div className="w-8 h-8 bg-drc-blue rounded-lg flex items-center justify-center text-white group-hover:scale-110 transition-transform">
@@ -897,7 +972,23 @@ export const AgentDashboard: React.FC = () => {
       <main className="flex-1 p-4 lg:p-8 overflow-y-auto custom-scrollbar scroll-smooth transition-all">
         <div className="max-w-6xl mx-auto">
           {view === 'dashboard' ? (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <>
+              <AnimatePresence>
+                {isCapturingLocation && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="mb-6 bg-drc-blue/10 text-drc-blue px-6 py-3 rounded-2xl border border-drc-blue/20 flex items-center gap-3 text-sm font-bold shadow-sm"
+                  >
+                    <div className="w-8 h-8 bg-drc-blue rounded-xl flex items-center justify-center">
+                      <RefreshCw className="w-4 h-4 text-white animate-spin" />
+                    </div>
+                    Capture de la position GPS en cours...
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Registration Form */}
               <section className="space-y-6">
                 {/* Help Card */}
@@ -956,7 +1047,10 @@ export const AgentDashboard: React.FC = () => {
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => setIsQRScanning(true)}
+                          onClick={async () => {
+                            setIsQRScanning(true);
+                            fetchLocationAndAddress();
+                          }}
                           className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl hover:bg-slate-700 transition-all border border-slate-700 font-bold text-xs"
                           title="Scanner QR Code"
                         >
@@ -966,14 +1060,7 @@ export const AgentDashboard: React.FC = () => {
                         <button
                           type="button"
                           onClick={async () => {
-                            const locationCoords = await getCurrentLocation();
-                            if (locationCoords) {
-                              const address = await geminiService.getAddressFromLocation(locationCoords.latitude, locationCoords.longitude);
-                              setCurrentLocation({
-                                ...locationCoords,
-                                address: address || undefined
-                              });
-                            }
+                            fetchLocationAndAddress();
                             setShowQrModal(true);
                           }}
                           disabled={!plate}
@@ -988,7 +1075,10 @@ export const AgentDashboard: React.FC = () => {
                     {/* Highly Visible Scanner Button */}
                     <button
                       type="button"
-                      onClick={() => setIsScanning(true)}
+                      onClick={async () => {
+                        setIsScanning(true);
+                        fetchLocationAndAddress();
+                      }}
                       className="w-full flex flex-col items-center justify-center gap-3 py-8 bg-drc-blue text-white rounded-3xl hover:bg-drc-blue/90 transition-all shadow-2xl shadow-drc-blue/30 font-black text-xl group relative overflow-hidden"
                     >
                       <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
@@ -1009,6 +1099,31 @@ export const AgentDashboard: React.FC = () => {
                   />
 
                   <form onSubmit={handleSubmit} className="space-y-6">
+                    {currentLocation && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3"
+                      >
+                        <div className="w-10 h-10 bg-emerald-500 text-white rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                          <MapPin className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Position GPS Capturée</p>
+                          <p className="text-xs font-bold text-white truncate">
+                            {currentLocation.address || `${currentLocation.latitude.toFixed(6)}, ${currentLocation.longitude.toFixed(6)}`}
+                          </p>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => fetchLocationAndAddress()}
+                          className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-all"
+                          title="Actualiser la position"
+                        >
+                          <RefreshCw className={`w-4 h-4 ${isCapturingLocation ? 'animate-spin' : ''}`} />
+                        </button>
+                      </motion.div>
+                    )}
                     <div>
                       <label className="block text-sm font-semibold text-slate-300 mb-2">Plaque d'immatriculation</label>
                       <div className="relative">
@@ -1024,17 +1139,34 @@ export const AgentDashboard: React.FC = () => {
                             setLastScanFailedType(false);
                           }}
                           placeholder="Ex: AB-123-CD"
-                          className="w-full pl-12 pr-14 py-3 bg-slate-800 border border-slate-700 rounded-xl focus:ring-2 focus:ring-drc-blue focus:border-transparent transition-all uppercase font-mono text-lg text-white placeholder-slate-600"
+                          className="w-full pl-12 pr-24 py-3 bg-slate-800 border border-slate-700 rounded-xl focus:ring-2 focus:ring-drc-blue focus:border-transparent transition-all uppercase font-mono text-lg text-white placeholder-slate-600"
                           required
                         />
-                        <button
-                          type="button"
-                          onClick={() => setIsQRScanning(true)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-drc-blue hover:bg-drc-blue/5 rounded-lg transition-all"
-                          title="Scanner QR Code"
-                        >
-                          <QrCode className="w-5 h-5" />
-                        </button>
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                          {plate && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPlate('');
+                                setRecognizedType(null);
+                                setSuggestedTariff(null);
+                                setLastScanFailedType(false);
+                              }}
+                              className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                              title="Effacer la plaque"
+                            >
+                              <X className="w-5 h-5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setIsQRScanning(true)}
+                            className="p-2 text-slate-400 hover:text-drc-blue hover:bg-drc-blue/5 rounded-lg transition-all"
+                            title="Scanner QR Code"
+                          >
+                            <QrCode className="w-5 h-5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1313,10 +1445,26 @@ export const AgentDashboard: React.FC = () => {
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
                           exit={{ opacity: 0, height: 0 }}
-                          className="flex items-center gap-3 p-4 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 text-sm font-medium"
+                          className="flex items-center justify-between gap-3 p-4 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 text-sm font-medium"
                         >
-                          <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                          {successMessage}
+                          <div className="flex items-center gap-3">
+                            <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                            {successMessage}
+                          </div>
+                          {lastConfirmedTransaction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowReceipt(lastConfirmedTransaction);
+                                setTimeout(handlePrint, 100);
+                              }}
+                              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500/30 transition-all border border-emerald-500/30 whitespace-nowrap"
+                              title="Réimprimer le reçu"
+                            >
+                              <Printer className="w-4 h-4" />
+                              Réimprimer
+                            </button>
+                          )}
                         </motion.div>
                       )}
                       {error && (
@@ -1367,26 +1515,27 @@ export const AgentDashboard: React.FC = () => {
                       >
                         <QrCode className="w-6 h-6" />
                       </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        type="button"
+                        onClick={() => {
+                          if (lastConfirmedTransaction) {
+                            setShowReceipt(lastConfirmedTransaction);
+                            setTimeout(handlePrint, 100);
+                          }
+                        }}
+                        disabled={!lastConfirmedTransaction}
+                        className={`px-6 rounded-2xl font-bold transition-all flex items-center justify-center border ${
+                          lastConfirmedTransaction 
+                            ? 'bg-slate-800 text-drc-blue border-slate-700 hover:bg-slate-700' 
+                            : 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed opacity-50'
+                        }`}
+                        title="Imprimer le dernier reçu"
+                      >
+                        <Printer className="w-6 h-6" />
+                      </motion.button>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (lastConfirmedTransaction) {
-                          setShowReceipt(lastConfirmedTransaction);
-                          setTimeout(handlePrint, 100);
-                        }
-                      }}
-                      disabled={!lastConfirmedTransaction}
-                      className={`w-full mt-4 flex items-center justify-center gap-3 py-4 rounded-2xl font-bold transition-all border ${
-                        lastConfirmedTransaction 
-                          ? 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700 shadow-xl' 
-                          : 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed opacity-50'
-                      }`}
-                    >
-                      <Printer className={`w-6 h-6 ${lastConfirmedTransaction ? 'text-drc-blue' : 'text-slate-600'}`} />
-                      Imprimer le reçu
-                    </button>
                   </form>
                 </div>
               </section>
@@ -1396,7 +1545,26 @@ export const AgentDashboard: React.FC = () => {
                 <div className="bg-slate-900 p-6 lg:p-8 rounded-3xl shadow-sm border border-slate-800 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-bold text-white tracking-tight">Derniers passages</h2>
-                    <span className="px-3 py-1 bg-slate-800 text-slate-400 text-xs font-bold rounded-full uppercase tracking-widest">Live</span>
+                    <div className="flex items-center gap-3">
+                      {lastConfirmedTransaction && (
+                        <motion.button
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => {
+                            setShowReceipt(lastConfirmedTransaction);
+                            setTimeout(handlePrint, 100);
+                          }}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-drc-blue/10 text-drc-blue rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-drc-blue/20 transition-all border border-drc-blue/20"
+                          title="Réimprimer le dernier reçu confirmé"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          Réimprimer
+                        </motion.button>
+                      )}
+                      <span className="px-3 py-1 bg-slate-800 text-slate-400 text-xs font-bold rounded-full uppercase tracking-widest">Live</span>
+                    </div>
                   </div>
 
                   <div className="flex-1 space-y-4 overflow-y-auto max-h-[600px] pr-2 custom-scrollbar">
@@ -1465,7 +1633,10 @@ export const AgentDashboard: React.FC = () => {
                             {tx.status !== 'cancelled' && (
                               <div className="flex gap-2">
                                 <button 
-                                  onClick={() => setShowReceipt(tx)}
+                                  onClick={() => {
+                                    setShowReceipt(tx);
+                                    setTimeout(handlePrint, 100);
+                                  }}
                                   className="p-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white transition-all border border-slate-700"
                                   title="Imprimer le ticket"
                                 >
@@ -1496,6 +1667,7 @@ export const AgentDashboard: React.FC = () => {
                 </div>
               </section>
             </div>
+          </>
           ) : view === 'history' ? (
             <div className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 p-6 rounded-3xl shadow-sm border border-slate-800">
@@ -2169,7 +2341,7 @@ export const AgentDashboard: React.FC = () => {
                   <div className="w-10 h-10 bg-drc-blue/10 rounded-xl flex items-center justify-center text-drc-blue">
                     <Zap className="w-6 h-6" />
                   </div>
-                  <h3 className="text-xl font-bold text-white">Tutoriel Online/Offline</h3>
+                  <h3 className="text-xl font-bold text-white">Tutoriel SmartToll DRC</h3>
                 </div>
                 <button 
                   onClick={() => setShowVideoModal(false)}
@@ -2179,41 +2351,18 @@ export const AgentDashboard: React.FC = () => {
                 </button>
               </div>
 
-              <div className="aspect-video bg-slate-900 rounded-3xl overflow-hidden mb-6 relative group">
+              <div className="aspect-video bg-slate-900 rounded-3xl overflow-hidden mb-6 relative group border border-slate-800">
                 {videoUrl ? (
-                  <video src={videoUrl} controls className="w-full h-full object-cover" />
+                  <video src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
                 ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-8 text-center">
-                    {isGeneratingVideo ? (
-                      <>
-                        <RefreshCw className="w-12 h-12 mb-4 animate-spin text-drc-blue/40" />
-                        <p className="text-lg font-bold">{generationStatus}</p>
-                        <p className="text-sm text-slate-400 mt-2 max-w-xs">
-                          Nous créons une vidéo personnalisée pour vous montrer le fonctionnement du mode Online/Offline.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                          <Zap className="w-8 h-8 text-drc-blue/40" />
-                        </div>
-                        <p className="text-lg font-bold">Aucune vidéo générée</p>
-                        <p className="text-sm text-slate-400 mt-2 mb-6 max-w-xs">
-                          Générez une vidéo de démonstration pour voir comment l'application gère les passages en mode connecté et hors ligne.
-                        </p>
-                        <button 
-                          onClick={generateTutorialVideo}
-                          className="px-6 py-3 bg-drc-blue text-white rounded-xl font-bold hover:bg-drc-blue/90 transition-all shadow-lg shadow-drc-blue/20 flex items-center gap-2"
-                        >
-                          <Zap className="w-4 h-4" />
-                          Générer la vidéo (AI)
-                        </button>
-                        <p className="text-[10px] text-slate-500 mt-4">
-                          Nécessite une clé API Google Cloud avec facturation activée.
-                          <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="underline ml-1">En savoir plus</a>
-                        </p>
-                      </>
-                    )}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-8 text-center bg-slate-800/50">
+                    <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mb-4">
+                      <Zap className="w-8 h-8 text-drc-blue/40" />
+                    </div>
+                    <p className="text-lg font-bold">Vidéo non disponible</p>
+                    <p className="text-sm text-slate-400 mt-2 max-w-xs mb-6">
+                      Le tutoriel vidéo n'est pas accessible pour le moment.
+                    </p>
                   </div>
                 )}
               </div>
@@ -2488,7 +2637,10 @@ export const AgentDashboard: React.FC = () => {
         <motion.button
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.9 }}
-          onClick={() => setIsScanning(true)}
+          onClick={async () => {
+            setIsScanning(true);
+            fetchLocationAndAddress();
+          }}
           className="w-16 h-16 bg-drc-blue text-white rounded-full shadow-2xl shadow-drc-blue/40 flex items-center justify-center border-4 border-slate-950"
         >
           <Camera className="w-8 h-8" />

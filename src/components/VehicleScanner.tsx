@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback } from 'react';
 import Webcam from 'react-webcam';
-import { Camera, RefreshCw, AlertCircle, X, CheckCircle2, Car, Truck, Bike, Bus } from 'lucide-react';
+import { Camera, RefreshCw, AlertCircle, X, CheckCircle2, Car, Truck, Bike, Bus, Video, Square, Play } from 'lucide-react';
 import { geminiService } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import { VehicleType } from '../types';
@@ -154,15 +154,27 @@ export const VehicleScanner: React.FC<VehicleScannerProps> = ({ onRecognized, is
             <form onSubmit={handleManualSubmit} className="w-full max-w-md space-y-6">
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Plaque d'immatriculation</label>
-                <input
-                  type="text"
-                  value={manualPlate}
-                  onChange={(e) => setManualPlate(e.target.value.toUpperCase())}
-                  placeholder="Ex: AB-123-CD"
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-drc-blue outline-none transition-all font-mono text-lg uppercase"
-                  required
-                  autoFocus
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={manualPlate}
+                    onChange={(e) => setManualPlate(e.target.value.toUpperCase())}
+                    placeholder="Ex: AB-123-CD"
+                    className="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-drc-blue outline-none transition-all font-mono text-lg uppercase"
+                    required
+                    autoFocus
+                  />
+                  {manualPlate && (
+                    <button
+                      type="button"
+                      onClick={() => setManualPlate('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                      title="Effacer la plaque"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
               </div>
               
               <div>

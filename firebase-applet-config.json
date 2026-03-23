@@ -1,10 +1,10 @@
 {
-  "projectId": "gen-lang-client-0157926148",
-  "appId": "1:452424470498:web:292151c10a8856de69f3bb",
-  "apiKey": "AIzaSyASslrqS8LMhepShASxh_BwxRD9L1eoPDs",
-  "authDomain": "gen-lang-client-0157926148.firebaseapp.com",
+  "projectId": "smarttoll-68f0f",
+  "appId": "1:577603401052:web:c8fe050637a9ae2196bd99",
+  "apiKey": "AIzaSyCu-JQ-5ObO8N9NWX_4mxphKSlzHF-ut_Y",
+  "authDomain": "smarttoll-68f0f.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-a58c92e5-6bda-410f-840d-761bf6b2ac78",
-  "storageBucket": "gen-lang-client-0157926148.firebasestorage.app",
-  "messagingSenderId": "452424470498",
+  "storageBucket": "smarttoll-68f0f.firebasestorage.app",
+  "messagingSenderId": "577603401052",
   "measurementId": ""
 }

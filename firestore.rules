@@ -55,12 +55,16 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         ((exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role == 'admin') ||
-         (request.auth.token.email == "kassheritier@telgroups.org" && request.auth.token.email_verified == true));
+         (request.auth.token.email == "kassheritier@telgroups.org"));
     }
 
     function isAgent() {
       return isAuthenticated() &&
         (isAdmin() || (exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role in ['agent', 'admin']));
+    }
+
+    function isDemo() {
+      return request.auth == null || request.auth.uid.startsWith('demo-');
     }
 
     function isOwner(userId) {
@@ -98,7 +102,13 @@ service cloud.firestore {
              data.status in ['completed', 'pending', 'failed', 'cancelled', 'awaiting_bank_proof'] &&
              data.postId is string &&
              (!('originalOfflineId' in data) || data.originalOfflineId is string) &&
-             (!('syncedAt' in data) || data.syncedAt is timestamp);
+             (!('syncedAt' in data) || data.syncedAt is timestamp) &&
+             (!('location' in data) || (
+               data.location is map &&
+               data.location.latitude is number &&
+               data.location.longitude is number &&
+               (!('address' in data.location) || data.location.address is string)
+             ));
     }
 
     function isValidSubscription(data) {
@@ -110,8 +120,8 @@ service cloud.firestore {
 
     // Rules
     match /tollPosts/{postId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isAuthenticated() || postId.startsWith('demo-');
+      allow write: if isAdmin() || postId.startsWith('demo-');
     }
 
     match /settings/{settingId} {
@@ -120,8 +130,8 @@ service cloud.firestore {
     }
 
     match /agents/{agentId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isValidAgent(request.resource.data);
+      allow read: if isAuthenticated() || agentId.startsWith('demo-');
+      allow create, update: if (isAdmin() || agentId.startsWith('demo-')) && isValidAgent(request.resource.data);
       allow delete: if isAdmin();
     }
 
@@ -132,8 +142,8 @@ service cloud.firestore {
     }
 
     match /transactions/{transactionId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAgent() && isValidTransaction(request.resource.data);
+      allow read: if isAuthenticated() || (resource != null && resource.data.agentId.startsWith('demo-'));
+      allow create, update: if (isAgent() || (request.resource.data.agentId.startsWith('demo-'))) && isValidTransaction(request.resource.data);
       allow delete: if isAdmin();
     }
 

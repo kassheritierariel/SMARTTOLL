@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
+import { 
+  APIProvider, 
+  Map, 
+  AdvancedMarker, 
+  Pin,
+  InfoWindow
+} from '@vis.gl/react-google-maps';
 import { 
   BarChart, 
   Bar, 
@@ -41,7 +48,11 @@ import {
   X,
   Trash2,
   CreditCard,
-  Wallet
+  Wallet,
+  Eye,
+  Navigation,
+  User,
+  Edit2
 } from 'lucide-react';
 import { AuthContext } from '../AuthContext';
 import { tollService } from '../services/tollService';
@@ -77,7 +88,12 @@ export const AdminDashboard: React.FC = () => {
   const [newAgent, setNewAgent] = useState<{ name: string; email: string; role: 'agent' | 'admin'; postId: string }>({ 
     name: '', email: '', role: 'agent', postId: '' 
   });
-  const [newPost, setNewPost] = useState({ name: '', location: '' });
+  const [newPost, setNewPost] = useState<{ name: string; location: string; latitude?: number; longitude?: number }>({ 
+    name: '', 
+    location: '',
+    latitude: -4.3224,
+    longitude: 15.3070
+  });
   const [newSubscription, setNewSubscription] = useState<Subscription>({
     userId: '',
     balance: 0,
@@ -89,13 +105,68 @@ export const AdminDashboard: React.FC = () => {
   const [transactionSearch, setTransactionSearch] = useState('');
   const [transactionPage, setTransactionPage] = useState(1);
   const [transactionStatusFilter, setTransactionStatusFilter] = useState<string>('all');
+  const [transactionAgentFilter, setTransactionAgentFilter] = useState<string>('all');
+  const [transactionPostFilter, setTransactionPostFilter] = useState<string>('all');
+  const [transactionStartDate, setTransactionStartDate] = useState<string>('');
+  const [transactionEndDate, setTransactionEndDate] = useState<string>('');
   const [agentPostFilter, setAgentPostFilter] = useState<string>('all');
   const [agentSearchQuery, setAgentSearchQuery] = useState<string>('');
   const [agentPage, setAgentPage] = useState(1);
   const [postSearchQuery, setPostSearchQuery] = useState('');
   const [postPage, setPostPage] = useState(1);
+  const [selectedPostDetails, setSelectedPostDetails] = useState<TollPost | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
   const itemsPerPage = 10;
+  
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(tx => {
+      const matchSearch = tx.vehiclePlate.toLowerCase().includes(transactionSearch.toLowerCase()) ||
+                          tx.vehicleType.toLowerCase().includes(transactionSearch.toLowerCase());
+      const matchStatus = transactionStatusFilter === 'all' || tx.status === transactionStatusFilter;
+      const matchAgent = transactionAgentFilter === 'all' || tx.agentId === transactionAgentFilter;
+      const matchPost = transactionPostFilter === 'all' || tx.postId === transactionPostFilter;
+      
+      let matchDate = true;
+      if (tx.timestamp) {
+        const txDate = tx.timestamp.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp);
+        if (transactionStartDate) {
+          const start = new Date(transactionStartDate);
+          start.setHours(0, 0, 0, 0);
+          if (txDate < start) matchDate = false;
+        }
+        if (transactionEndDate) {
+          const end = new Date(transactionEndDate);
+          end.setHours(23, 59, 59, 999);
+          if (txDate > end) matchDate = false;
+        }
+      }
+
+      return matchSearch && matchStatus && matchAgent && matchPost && matchDate;
+    });
+  }, [transactions, transactionSearch, transactionStatusFilter, transactionAgentFilter, transactionPostFilter, transactionStartDate, transactionEndDate]);
+
+  const filteredAgents = useMemo(() => {
+    return agents.filter(a => {
+      const matchPost = agentPostFilter === 'all' || a.postId === agentPostFilter;
+      const matchSearch = a.name.toLowerCase().includes(agentSearchQuery.toLowerCase()) || 
+                          a.email.toLowerCase().includes(agentSearchQuery.toLowerCase());
+      return matchPost && matchSearch;
+    });
+  }, [agents, agentPostFilter, agentSearchQuery]);
+
+  const filteredPosts = useMemo(() => {
+    return posts.filter(p => 
+      p.name.toLowerCase().includes(postSearchQuery.toLowerCase()) ||
+      p.location.toLowerCase().includes(postSearchQuery.toLowerCase())
+    );
+  }, [posts, postSearchQuery]);
+
+  const filteredSubscriptions = useMemo(() => {
+    return subscriptions.filter(s => 
+      s.userId.toLowerCase().includes(subscriptionSearch.toLowerCase()) ||
+      s.planType.toLowerCase().includes(subscriptionSearch.toLowerCase())
+    );
+  }, [subscriptions, subscriptionSearch]);
 
   // Robust admin check
   const isAdmin = agent?.role === 'admin' || user?.email === 'kassheritier@telgroups.org';
@@ -140,11 +211,25 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
+  const handleUpdateAgentRole = async (agentId: string, newRole: 'agent' | 'admin') => {
+    try {
+      const agentToUpdate = agents.find(a => a.id === agentId);
+      if (!agentToUpdate) return;
+      
+      await tollService.updateAgent(agentId, { ...agentToUpdate, role: newRole });
+      setAgents(prev => prev.map(a => a.id === agentId ? { ...a, role: newRole } : a));
+      alert(`Rôle mis à jour: ${newRole.toUpperCase()}`);
+    } catch (error) {
+      console.error('Error updating agent role:', error);
+      alert('Erreur lors de la mise à jour du rôle');
+    }
+  };
+
   const handleDownloadTransactions = () => {
-    const headers = ['ID', 'Plaque', 'Type', 'Montant', 'Devise', 'Méthode', 'Date', 'Status', 'Agent', 'Poste'];
+    const headers = ['ID', 'Plaque', 'Type', 'Montant', 'Devise', 'Méthode', 'Date', 'Status', 'Agent', 'Poste', 'Latitude', 'Longitude', 'Adresse'];
     const csvContent = [
       headers.join(','),
-      ...transactions.map(tx => [
+      ...filteredTransactions.map(tx => [
         tx.id,
         tx.vehiclePlate,
         tx.vehicleType,
@@ -154,7 +239,10 @@ export const AdminDashboard: React.FC = () => {
         tx.timestamp?.toDate ? format(tx.timestamp.toDate(), 'yyyy-MM-dd HH:mm:ss') : '',
         tx.status,
         tx.agentId,
-        tx.postId
+        tx.postId,
+        tx.location?.latitude || '',
+        tx.location?.longitude || '',
+        `"${(tx.location?.address || '').replace(/"/g, '""')}"`
       ].join(','))
     ].join('\n');
 
@@ -173,7 +261,7 @@ export const AdminDashboard: React.FC = () => {
     const headers = ['ID', 'Nom', 'Email', 'Rôle', 'Poste', 'Statut'];
     const csvContent = [
       headers.join(','),
-      ...agents.map(a => [
+      ...filteredAgents.map(a => [
         a.id,
         a.name,
         a.email,
@@ -198,7 +286,7 @@ export const AdminDashboard: React.FC = () => {
     const headers = ['ID Utilisateur', 'Plan', 'Solde', 'Devise'];
     const csvContent = [
       headers.join(','),
-      ...subscriptions.map(s => [
+      ...filteredSubscriptions.map(s => [
         s.userId,
         s.planType,
         s.balance,
@@ -250,26 +338,46 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleDeletePost = async (postId: string) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer ce poste ?')) return;
+    try {
+      await tollService.deleteTollPost(postId);
+      setPosts(prev => prev.filter(p => p.id !== postId));
+      alert('Poste supprimé avec succès');
+    } catch (error) {
+      console.error('Error deleting post:', error);
+      alert('Erreur lors de la suppression du poste');
+    }
+  };
+
   const handleAddAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(newAgent.email)) {
-      setEmailError("Veuillez entrer une adresse email valide.");
+    // Robust email validation
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    const email = newAgent.email.trim();
+    
+    if (!email) {
+      setEmailError("L'adresse email est requise.");
+      return;
+    }
+    
+    if (!emailRegex.test(email)) {
+      setEmailError("Veuillez entrer une adresse email valide (ex: nom@domaine.com).");
       return;
     }
     
     setEmailError(null);
     setIsSaving(true);
     try {
+      const agentData = { ...newAgent, email };
       if (editingAgent) {
-        await tollService.updateAgent(editingAgent.id, newAgent);
-        setAgents(agents.map(a => a.id === editingAgent.id ? { ...a, ...newAgent } : a));
+        await tollService.updateAgent(editingAgent.id, agentData);
+        setAgents(agents.map(a => a.id === editingAgent.id ? { ...a, ...agentData } : a));
       } else {
         const id = Math.random().toString(36).substring(7);
-        await tollService.createAgent({ ...newAgent, id, active: true });
-        setAgents([...agents, { ...newAgent, id, active: true }]);
+        await tollService.createAgent({ ...agentData, id, active: true });
+        setAgents([...agents, { ...agentData, id, active: true }]);
       }
       setShowAddAgentModal(false);
       setEditingAgent(null);
@@ -296,7 +404,12 @@ export const AdminDashboard: React.FC = () => {
       }
       setShowAddPostModal(false);
       setEditingPost(null);
-      setNewPost({ name: '', location: '' });
+      setNewPost({ 
+        name: '', 
+        location: '',
+        latitude: -4.3224,
+        longitude: 15.3070
+      });
     } finally {
       setIsSaving(false);
     }
@@ -396,6 +509,18 @@ export const AdminDashboard: React.FC = () => {
     return acc;
   }, {} as Record<string, number>);
 
+  const agentRevenueStats = transactions.reduce((acc, tx) => {
+    if (tx.status === 'cancelled') return acc;
+    const amountInDisplayCurrency = tx.currency === displayCurrency 
+      ? tx.amount 
+      : (displayCurrency === 'USD' ? tx.amount / EXCHANGE_RATE : tx.amount * EXCHANGE_RATE);
+    
+    const agent = agents.find(a => a.id === tx.agentId);
+    const agentName = agent ? agent.name : tx.agentId;
+    acc[agentName] = (acc[agentName] || 0) + amountInDisplayCurrency;
+    return acc;
+  }, {} as Record<string, number>);
+
   const stats = [
     { 
       label: 'Revenu Total', 
@@ -444,6 +569,9 @@ export const AdminDashboard: React.FC = () => {
 
   const vehicleData = Object.entries(vehicleStats).map(([name, value]) => ({ name, value }));
   const paymentData = Object.entries(paymentStats).map(([name, value]) => ({ name, value }));
+  const agentRevenueData = Object.entries(agentRevenueStats)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -727,6 +855,51 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm">
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight mb-8">Performance des agents</h2>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={agentRevenueData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false}
+                  tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false}
+                  tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
+                  tickFormatter={(value) => displayCurrency === 'USD' ? `$${value}` : `${value/1000}k`}
+                />
+                <Tooltip 
+                  cursor={{ fill: '#f8fafc' }}
+                  contentStyle={{ 
+                    backgroundColor: '#1e293b', 
+                    border: 'none', 
+                    borderRadius: '12px',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}
+                  formatter={(value: number) => [
+                    displayCurrency === 'USD' 
+                      ? `$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}` 
+                      : `${value.toLocaleString()} CDF`,
+                    'Revenu'
+                  ]}
+                />
+                <Bar dataKey="value" fill="#10b981" radius={[8, 8, 0, 0]} barSize={40}>
+                  {agentRevenueData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[(index + 1) % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm">
           <h2 className="text-xl font-bold text-slate-900 tracking-tight mb-8">Alertes récentes</h2>
           <div className="space-y-4">
             <div className="flex items-start gap-4 p-4 bg-amber-50 rounded-2xl border border-amber-100">
@@ -756,13 +929,6 @@ export const AdminDashboard: React.FC = () => {
   );
 
   const renderTransactions = () => {
-    const filteredTransactions = transactions.filter(tx => {
-      const matchSearch = tx.vehiclePlate.toLowerCase().includes(transactionSearch.toLowerCase()) ||
-                          tx.vehicleType.toLowerCase().includes(transactionSearch.toLowerCase());
-      const matchStatus = transactionStatusFilter === 'all' || tx.status === transactionStatusFilter;
-      return matchSearch && matchStatus;
-    });
-
     const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
     const startIndex = (transactionPage - 1) * itemsPerPage;
     const paginatedTransactions = filteredTransactions.slice(startIndex, startIndex + itemsPerPage);
@@ -772,17 +938,17 @@ export const AdminDashboard: React.FC = () => {
         <div className="p-6 lg:p-8 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Journal des transactions</h2>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <div className="relative group">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-drc-blue transition-colors" />
               <input 
                 type="text"
-                placeholder="Plaque ou type..."
+                placeholder="Filtrer par plaque ou type..."
                 value={transactionSearch}
                 onChange={(e) => {
                   setTransactionSearch(e.target.value);
                   setTransactionPage(1);
                 }}
-                className="pl-9 pr-9 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-drc-blue/20 transition-all w-40"
+                className="pl-10 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-drc-blue/20 focus:bg-white transition-all w-48 lg:w-56"
               />
               {transactionSearch && (
                 <button 
@@ -792,12 +958,47 @@ export const AdminDashboard: React.FC = () => {
                   }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
-              <Filter className="w-3.5 h-3.5 text-slate-400" />
+            
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+              <Users className="w-4 h-4 text-slate-400" />
+              <select 
+                value={transactionAgentFilter}
+                onChange={(e) => {
+                  setTransactionAgentFilter(e.target.value);
+                  setTransactionPage(1);
+                }}
+                className="bg-transparent text-xs font-bold text-slate-600 outline-none cursor-pointer max-w-[120px]"
+              >
+                <option value="all">Tous les agents</option>
+                {agents.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+              <MapPin className="w-4 h-4 text-slate-400" />
+              <select 
+                value={transactionPostFilter}
+                onChange={(e) => {
+                  setTransactionPostFilter(e.target.value);
+                  setTransactionPage(1);
+                }}
+                className="bg-transparent text-xs font-bold text-slate-600 outline-none cursor-pointer max-w-[120px]"
+              >
+                <option value="all">Tous les postes</option>
+                {posts.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+              <Filter className="w-4 h-4 text-slate-400" />
               <select 
                 value={transactionStatusFilter}
                 onChange={(e) => {
@@ -812,6 +1013,44 @@ export const AdminDashboard: React.FC = () => {
                 <option value="awaiting_bank_proof">Attente Banque</option>
               </select>
             </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+              <Calendar className="w-4 h-4 text-slate-400" />
+              <div className="flex items-center gap-1">
+                <input 
+                  type="date"
+                  value={transactionStartDate}
+                  onChange={(e) => {
+                    setTransactionStartDate(e.target.value);
+                    setTransactionPage(1);
+                  }}
+                  className="bg-transparent text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
+                />
+                <span className="text-slate-300">-</span>
+                <input 
+                  type="date"
+                  value={transactionEndDate}
+                  onChange={(e) => {
+                    setTransactionEndDate(e.target.value);
+                    setTransactionPage(1);
+                  }}
+                  className="bg-transparent text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
+                />
+              </div>
+              {(transactionStartDate || transactionEndDate) && (
+                <button 
+                  onClick={() => {
+                    setTransactionStartDate('');
+                    setTransactionEndDate('');
+                    setTransactionPage(1);
+                  }}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
             <button 
               onClick={handleDownloadTransactions}
               className="p-2 text-slate-400 hover:text-drc-blue transition-colors bg-slate-50 rounded-xl border border-slate-100"
@@ -940,13 +1179,6 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const renderAgents = () => {
-    const filteredAgents = agents.filter(a => {
-      const matchPost = agentPostFilter === 'all' || a.postId === agentPostFilter;
-      const matchSearch = a.name.toLowerCase().includes(agentSearchQuery.toLowerCase()) || 
-                          a.email.toLowerCase().includes(agentSearchQuery.toLowerCase());
-      return matchPost && matchSearch;
-    });
-
     const totalPages = Math.ceil(filteredAgents.length / itemsPerPage);
     const startIndex = (agentPage - 1) * itemsPerPage;
     const paginatedAgents = filteredAgents.slice(startIndex, startIndex + itemsPerPage);
@@ -1036,7 +1268,14 @@ export const AdminDashboard: React.FC = () => {
                     <td className="px-6 py-4 font-bold text-slate-900">{a.name}</td>
                     <td className="px-6 py-4 text-sm text-slate-600">{a.email}</td>
                     <td className="px-6 py-4">
-                      <span className="text-xs font-bold uppercase text-slate-500">{a.role}</span>
+                      <select
+                        value={a.role}
+                        onChange={(e) => handleUpdateAgentRole(a.id, e.target.value as 'agent' | 'admin')}
+                        className="text-xs font-bold uppercase text-slate-500 bg-transparent border-none focus:ring-0 cursor-pointer hover:text-drc-blue transition-colors"
+                      >
+                        <option value="agent">Agent</option>
+                        <option value="admin">Admin</option>
+                      </select>
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-600">
                       {posts.find(p => p.id === a.postId)?.name || 'Non assigné'}
@@ -1171,11 +1410,6 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const renderPosts = () => {
-    const filteredPosts = posts.filter(p => 
-      p.name.toLowerCase().includes(postSearchQuery.toLowerCase()) ||
-      p.location.toLowerCase().includes(postSearchQuery.toLowerCase())
-    );
-
     const totalPages = Math.ceil(filteredPosts.length / itemsPerPage);
     const startIndex = (postPage - 1) * itemsPerPage;
     const paginatedPosts = filteredPosts.slice(startIndex, startIndex + itemsPerPage);
@@ -1232,16 +1466,29 @@ export const AdminDashboard: React.FC = () => {
                 <p className="text-sm text-slate-500 mb-4">{p.location}</p>
                 <div className="flex items-center justify-between pt-4 border-t border-slate-200">
                   <span className="text-xs font-bold text-slate-400">Agents: {agents.filter(a => a.postId === p.id).length}</span>
-                  <button 
-                    onClick={() => {
-                      setEditingPost(p);
-                      setNewPost({ name: p.name, location: p.location });
-                      setShowAddPostModal(true);
-                    }}
-                    className="text-xs font-bold text-drc-blue hover:underline"
-                  >
-                    Modifier
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => {
+                        setEditingPost(p);
+                        setNewPost({ 
+                          name: p.name, 
+                          location: p.location,
+                          latitude: p.latitude || -4.3224,
+                          longitude: p.longitude || 15.3070
+                        });
+                        setShowAddPostModal(true);
+                      }}
+                      className="text-xs font-bold text-drc-blue hover:underline"
+                    >
+                      Modifier
+                    </button>
+                    <button 
+                      onClick={() => handleDeletePost(p.id)}
+                      className="text-xs font-bold text-red-500 hover:underline"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
                 </div>
               </div>
             ))
@@ -1361,11 +1608,6 @@ export const AdminDashboard: React.FC = () => {
   );
 
   const renderSubscriptions = () => {
-    const filteredSubscriptions = subscriptions.filter(s => 
-      s.userId.toLowerCase().includes(subscriptionSearch.toLowerCase()) ||
-      s.planType.toLowerCase().includes(subscriptionSearch.toLowerCase())
-    );
-
     const totalPages = Math.ceil(filteredSubscriptions.length / itemsPerPage);
     const startIndex = (subscriptionPage - 1) * itemsPerPage;
     const paginatedSubscriptions = filteredSubscriptions.slice(startIndex, startIndex + itemsPerPage);
@@ -1715,6 +1957,30 @@ export const AdminDashboard: React.FC = () => {
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-drc-blue outline-none"
                     />
                   </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Latitude</label>
+                      <input 
+                        required
+                        type="number"
+                        step="any"
+                        value={newPost.latitude}
+                        onChange={(e) => setNewPost({ ...newPost, latitude: parseFloat(e.target.value) })}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-drc-blue outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Longitude</label>
+                      <input 
+                        required
+                        type="number"
+                        step="any"
+                        value={newPost.longitude}
+                        onChange={(e) => setNewPost({ ...newPost, longitude: parseFloat(e.target.value) })}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-drc-blue outline-none"
+                      />
+                    </div>
+                  </div>
                   <button 
                     type="submit"
                     disabled={isSaving}
@@ -1792,6 +2058,132 @@ export const AdminDashboard: React.FC = () => {
                     {isSaving ? 'Création...' : 'Créer l\'Abonnement'}
                   </button>
                 </form>
+              </motion.div>
+            </div>
+          )}
+
+          {selectedPostDetails && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+              >
+                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-10">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-drc-blue/10 rounded-2xl flex items-center justify-center text-drc-blue">
+                      <MapPin className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-bold text-slate-900">{selectedPostDetails.name}</h3>
+                      <p className="text-slate-500 text-sm">{selectedPostDetails.location}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setSelectedPostDetails(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+                    <X className="w-6 h-6 text-slate-400" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                  {/* Interactive Map */}
+                  <div className="space-y-3">
+                    <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <Navigation className="w-4 h-4" />
+                      Localisation Géographique
+                    </h4>
+                    <div className="aspect-video bg-slate-100 rounded-3xl border border-slate-200 overflow-hidden relative shadow-inner">
+                      <APIProvider apiKey={(import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY || ''}>
+                        <Map
+                          style={{ width: '100%', height: '100%' }}
+                          defaultCenter={{ 
+                            lat: selectedPostDetails.latitude || -4.3224, 
+                            lng: selectedPostDetails.longitude || 15.3070 
+                          }}
+                          defaultZoom={13}
+                          gestureHandling={'greedy'}
+                          disableDefaultUI={false}
+                          mapId={'bf51a910020fa1cf'} // Example Map ID for Advanced Markers
+                        >
+                          <AdvancedMarker
+                            position={{ 
+                              lat: selectedPostDetails.latitude || -4.3224, 
+                              lng: selectedPostDetails.longitude || 15.3070 
+                            }}
+                            title={selectedPostDetails.name}
+                          >
+                            <Pin background={'#007FFF'} borderColor={'#FFFFFF'} glyphColor={'#FFFFFF'} />
+                          </AdvancedMarker>
+                        </Map>
+                      </APIProvider>
+                      {!(import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY && (
+                        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center p-6 text-center">
+                          <div className="bg-white p-4 rounded-2xl shadow-xl max-w-xs">
+                            <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                            <p className="text-xs font-bold text-slate-900">Clé API Google Maps manquante</p>
+                            <p className="text-[10px] text-slate-500 mt-1">Veuillez configurer VITE_GOOGLE_MAPS_API_KEY dans les secrets pour activer la carte interactive.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Assigned Agents */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        Agents Assignés ({agents.filter(a => a.postId === selectedPostDetails.id).length})
+                      </h4>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {agents.filter(a => a.postId === selectedPostDetails.id).length > 0 ? (
+                        agents.filter(a => a.postId === selectedPostDetails.id).map(agent => (
+                          <div key={agent.id} className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 shadow-sm">
+                              <User className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">{agent.name}</p>
+                              <p className="text-[10px] text-slate-500 font-medium">{agent.email}</p>
+                            </div>
+                            <div className={`ml-auto w-2 h-2 rounded-full ${agent.active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-300'}`}></div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="col-span-full py-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                          <p className="text-sm text-slate-400 italic">Aucun agent assigné à ce poste.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-8 bg-slate-50 border-t border-slate-100 flex gap-3">
+                  <button 
+                    onClick={() => {
+                      setEditingPost(selectedPostDetails);
+                      setNewPost({ 
+                        name: selectedPostDetails.name, 
+                        location: selectedPostDetails.location,
+                        latitude: selectedPostDetails.latitude || -4.3224,
+                        longitude: selectedPostDetails.longitude || 15.3070
+                      });
+                      setShowAddPostModal(true);
+                      setSelectedPostDetails(null);
+                    }}
+                    className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 rounded-2xl font-bold hover:bg-slate-100 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    Modifier le poste
+                  </button>
+                  <button 
+                    onClick={() => setSelectedPostDetails(null)}
+                    className="flex-1 py-4 bg-drc-blue text-white rounded-2xl font-bold hover:bg-drc-blue/90 transition-all shadow-lg shadow-drc-blue/20"
+                  >
+                    Fermer
+                  </button>
+                </div>
               </motion.div>
             </div>
           )}

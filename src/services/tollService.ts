@@ -353,11 +353,20 @@ export const tollService = {
   },
 
   async updateTollPost(postId: string, data: Partial<TollPost>) {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser && !postId.startsWith('demo-')) return;
     try {
       await updateDoc(doc(db, 'tollPosts', postId), data);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `tollPosts/${postId}`);
+    }
+  },
+
+  async deleteTollPost(postId: string) {
+    if (!auth.currentUser && !postId.startsWith('demo-')) return;
+    try {
+      await deleteDoc(doc(db, 'tollPosts', postId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `tollPosts/${postId}`);
     }
   },
 
